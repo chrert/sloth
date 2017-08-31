@@ -1,4 +1,5 @@
 import math
+import sys
 from PyQt4.QtGui import *
 from PyQt4.Qt import *
 
@@ -78,6 +79,87 @@ class PointItemInserter(ItemInserter):
         self.annotationFinished.emit()
         event.accept()
 
+class ExtremeClickingInserter(ItemInserter):
+    def __init__(self, labeltool, scene, default_properties=None,
+                 prefix="", commit=True):
+        ItemInserter.__init__(self, labeltool, scene, default_properties,
+                              prefix, commit)
+
+        self._helpLines = None
+        self._helpLinesPen = QPen(Qt.green, 2, Qt.DashLine)
+
+        self._points = QGraphicsItemGroup()
+        self._scene.addItem(self._points)
+        self._pointPen = QPen(Qt.red)
+
+    def mouseReleaseEvent(self, event, image_item):
+        pos = event.scenePos()
+        new_point = QGraphicsEllipseItem(QRectF(pos.x()-2, pos.y()-2, 5, 5))
+        new_point.setPen(self._pointPen)
+        self._points.addToGroup(new_point)
+
+        if len(self._points.childItems()) == 4:
+            x1 = sys.maxint
+            x2 = -sys.maxint
+            y1 = sys.maxint
+            y2 = -sys.maxint
+            for point in self._points.childItems():
+                x1 = min(x1, point.rect().x())
+                x2 = max(x2, point.rect().x())
+                y1 = min(y1, point.rect().y())
+                y2 = max(y2, point.rect().y())
+            width = x2 - x1
+            height = y2 - y1
+
+            if width > 1 and height > 1:
+                self._ann.update({self._prefix + 'x': x1,
+                                  self._prefix + 'y': y1,
+                                  self._prefix + 'width': width,
+                                  self._prefix + 'height': height})
+                self._ann.update(self._default_properties)
+                if self._commit:
+                    image_item.addAnnotation(self._ann)
+            self.annotationFinished.emit()
+
+            self._scene.removeItem(self._points)
+            self._points = QGraphicsItemGroup()
+            self._scene.addItem(self._points)
+
+        event.accept()
+
+    def mouseMoveEvent(self, event, image_item):
+        if self._helpLines is not None:
+            self._scene.removeItem(self._helpLines)
+
+        self._helpLines = QGraphicsItemGroup()
+        group = self._helpLines
+
+        verticalHelpLine = QGraphicsLineItem(event.scenePos().x(), 0, event.scenePos().x(), self._scene.height())
+        horizontalHelpLine = QGraphicsLineItem(0, event.scenePos().y(), self._scene.width(), event.scenePos().y())
+
+        horizontalHelpLine.setPen(self._helpLinesPen)
+        verticalHelpLine.setPen(self._helpLinesPen)
+
+        group.addToGroup(verticalHelpLine)
+        group.addToGroup(horizontalHelpLine)
+
+        self._scene.addItem(self._helpLines)
+
+        event.accept()
+
+    def allowOutOfSceneEvents(self):
+        return True
+
+    def abort(self):
+        if self._helpLines is not None:
+            self._scene.removeItem(self._helpLines)
+            self._helpLines = None
+
+        self._scene.removeItem(self._points)
+        self._points = QGraphicsItemGroup()
+        self._scene.addItem(self._points)
+
+        ItemInserter.abort(self)
 
 class RectItemInserter(ItemInserter):
     def __init__(self, labeltool, scene, default_properties=None,
