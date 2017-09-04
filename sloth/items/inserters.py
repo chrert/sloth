@@ -99,23 +99,32 @@ class ExtremeClickingInserter(ItemInserter):
         self._points.addToGroup(new_point)
 
         if len(self._points.childItems()) == 4:
-            x1 = sys.maxint
-            x2 = -sys.maxint
-            y1 = sys.maxint
-            y2 = -sys.maxint
+            left = QPointF(sys.maxint, 0)
+            right = QPointF(-sys.maxint, 0)
+            top = QPointF(0, sys.maxint)
+            bottom = QPointF(0, -sys.maxint)
             for point in self._points.childItems():
-                x1 = min(x1, point.rect().x())
-                x2 = max(x2, point.rect().x())
-                y1 = min(y1, point.rect().y())
-                y2 = max(y2, point.rect().y())
-            width = x2 - x1
-            height = y2 - y1
+                if point.rect().x() < left.x():
+                    left = point.rect()
+                if point.rect().y() < top.y():
+                    top = point.rect()
+                if (point.rect().x() + point.rect().width()) > right.x():
+                    right = point.rect()
+                if (point.rect().y() + point.rect().height()) > bottom.y():
+                    bottom = point.rect()
+
+            width = right.x() - left.x()
+            height = bottom.y() - top.y()
 
             if width > 1 and height > 1:
-                self._ann.update({self._prefix + 'x': x1,
-                                  self._prefix + 'y': y1,
-                                  self._prefix + 'width': width,
-                                  self._prefix + 'height': height})
+                self._ann.update({self._prefix + 'left_x': left.x(),
+                                  self._prefix + 'left_y': left.y(),
+                                  self._prefix + 'right_x': right.x(),
+                                  self._prefix + 'right_y': right.y(),
+                                  self._prefix + 'top_x': top.x(),
+                                  self._prefix + 'top_y': top.y(),
+                                  self._prefix + 'bottom_x': bottom.x(),
+                                  self._prefix + 'bottom_y': bottom.y()})
                 self._ann.update(self._default_properties)
                 if self._commit:
                     image_item.addAnnotation(self._ann)

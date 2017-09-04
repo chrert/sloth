@@ -1,6 +1,7 @@
 import logging
 from PyQt4.Qt import *
-
+import numpy as np
+import sys
 
 LOG = logging.getLogger(__name__)
 
@@ -346,6 +347,154 @@ class PointItem(BaseItem):
             self.moveBy(*ds)
             event.accept()
 
+class ExtremeClickingItem(BaseItem):
+    def __init__(self, model_item=None, prefix="", parent=None):
+        BaseItem.__init__(self, model_item, prefix, parent)
+
+        self.setFlags(QGraphicsItem.ItemIsSelectable | \
+                      QGraphicsItem.ItemSendsGeometryChanges | \
+                      QGraphicsItem.ItemSendsScenePositionChanges)
+
+        self._left_point = None
+        self._right_point = None
+        self._top_point = None
+        self._bottom_point = None
+
+        self._move_point = None
+        self._move_x_key = None
+        self._move_y_key = None
+        self._move_limit_x = None
+        self._move_limit_y = None
+
+        self._updatePoints(model_item)
+
+    def __call__(self, model_item=None, parent=None):
+        item = ExtremeClickingItem(model_item, parent)
+        item.setPen(self.pen())
+        item.setBrush(self.brush())
+        return item
+
+
+    def _updatePoints(self, model_item):
+        self.prepareGeometryChange()
+        if model_item is not None:
+            try:
+                self._left_point = QPointF(float(model_item[self.prefix() + "left_x"]),
+                                           float(model_item[self.prefix() + "left_y"]))
+                self._right_point = QPointF(float(model_item[self.prefix() + "right_x"]),
+                                            float(model_item[self.prefix() + "right_y"]))
+                self._top_point = QPointF(float(model_item[self.prefix() + "top_x"]),
+                                          float(model_item[self.prefix() + "top_y"]))
+                self._bottom_point = QPointF(float(model_item[self.prefix() + "bottom_x"]),
+                                             float(model_item[self.prefix() + "bottom_y"]))
+            except KeyError as e:
+                LOG.debug("ExtremeClickItem: Could not find expected key in item: "
+                          + str(e) + ". Check your config!")
+                self.setValid(False)
+        else:
+            self._left_point = QPointF()
+            self._right_point = QPointF()
+            self._top_point = QPointF()
+            self._bottom_point = QPointF()
+        self.setPos(QPointF(0, 0))
+
+    def _buildRect(self):
+        x_min = self._left_point.x()
+        y_min = self._top_point.y()
+        x_max = self._right_point.x()
+        y_max = self._bottom_point.y()
+        width = x_max - x_min
+        height = y_max - y_min
+        return QRectF(QPointF(x_min, y_min), QSizeF(width, height))
+
+    def boundingRect(self):
+        return self._buildRect()
+
+    def _drawPoint(self, painter, point):
+        painter.drawEllipse(QRectF(point.x()-2, point.y()-2, 5, 5))
+
+    def paint(self, painter, option, widget=None):
+        BaseItem.paint(self, painter, option, widget)
+
+        pen = self.pen()
+        if self.isSelected():
+            pen.setStyle(Qt.DashLine)
+        painter.setPen(pen)
+        painter.drawRect(self.boundingRect())
+        self._drawPoint(painter, self._left_point)
+        self._drawPoint(painter, self._right_point)
+        self._drawPoint(painter, self._top_point)
+        self._drawPoint(painter, self._bottom_point)
+
+    def dataChange(self):
+        self._updatePoints(self._model_item)
+
+    def mousePressEvent(self, event):
+        #if event.modifiers() & Qt.ControlModifier != 0:
+        if event.button() & Qt.RightButton != 0:
+            rect = self.boundingRect()
+            dist_left = abs(event.scenePos().x() - rect.x())
+            dist_right = abs(event.scenePos().x() - (rect.x() + rect.width()))
+            dist_top = abs(event.scenePos().y() - rect.y())
+            dist_bottom = abs(event.scenePos().y() - (rect.y() + rect.height()))
+
+            # find nearest rect border
+            np_dists = np.array([dist_left, dist_right, dist_top, dist_bottom])
+            argmin_dist = np_dists.argmin()
+
+            np_points = np.array([[self._left_point.x(), self._left_point.y()],
+                                  [self._right_point.x(), self._right_point.y()],
+                                  [self._top_point.x(), self._top_point.y()],
+                                  [self._bottom_point.x(), self._bottom_point.y()]])
+            np_other_points = np_points[[i != argmin_dist for i in range(4)], :]
+
+            if argmin_dist == 0:
+                self._move_point = self._left_point
+                point_prefix = 'left'
+                self._move_limit_x = (-sys.maxint, np_other_points[:, 0].min())
+                self._move_limit_y = (self._top_point.y(), self._bottom_point.y())
+            elif argmin_dist == 1:
+                self._move_point = self._right_point
+                point_prefix = 'right'
+                self._move_limit_x = (np_other_points[:, 0].max(), sys.maxint)
+                self._move_limit_y = (self._top_point.y(), self._bottom_point.y())
+            elif argmin_dist == 2:
+                self._move_point = self._top_point
+                point_prefix = 'top'
+                self._move_limit_x = (self._left_point.x(), self._right_point.x())
+                self._move_limit_y = (-sys.maxint, np_other_points[:, 1].min())
+            else:
+                self._move_point = self._bottom_point
+                point_prefix = 'bottom'
+                self._move_limit_x = (self._left_point.x(), self._right_point.x())
+                self._move_limit_y = (np_other_points[:, 1].max(), sys.maxint)
+
+            self._move_x_key = point_prefix + '_x'
+            self._move_y_key = point_prefix + '_y'
+
+            event.accept()
+        else:
+            BaseItem.mousePressEvent(self, event)
+
+    def mouseMoveEvent(self, event):
+        if self._move_point is not None:
+            new_x = min(max(event.scenePos().x(), self._move_limit_x[0]), self._move_limit_x[1])
+            new_y = min(max(event.scenePos().y(), self._move_limit_y[0]), self._move_limit_y[1])
+            self._move_point.setX(new_x)
+            self._move_point.setY(new_y)
+            self._model_item[self._move_x_key] = self._move_point.x()
+            self._model_item[self._move_y_key] = self._move_point.y()
+            self._updatePoints(self._model_item)
+            event.accept()
+        else:
+            BaseItem.mouseMoveEvent(self, event)
+
+    def mouseReleaseEvent(self, event):
+        if self._move_point is not None:
+            self._move_point = None
+            event.accept()
+        else:
+            BaseItem.mouseReleaseEvent(self, event)
 
 class RectItem(BaseItem):
     def __init__(self, model_item=None, prefix="", parent=None):
